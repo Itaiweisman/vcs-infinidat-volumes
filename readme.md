@@ -1,4 +1,5 @@
 # INFINIDAT Storage Plugin for Veritas Cluster
+### Version 1.1 - support for volumes
 
 Replication plugin to be used with Veritas cluster (aka VCS, InfoScale HA). manages synchronous replication pairs between two or more nodes, running Veritas Cluster
 
@@ -7,6 +8,7 @@ Replication plugin to be used with Veritas cluster (aka VCS, InfoScale HA). mana
 The Linux/AIX deployment is based on Python module of REST (REST::Client - https://metacpan.org/pod/REST::Client). the package was build with version 273 of it. resource deployment scripts include the package installation. REST Client has to be compiled with the Perl distribution released with Veritas cluster installation (VRTSperl).
 With the Windows version of the plugin, InfiniBox shell (Infinishell) is being used, which can be obtained from repo.infinidat.com (version 4.0 onwards is supported)
 The plugin can be installed after having Veritas Cluster installed.
+Note - no support for Windows with volumes
 
 
 ## Installing
@@ -20,7 +22,7 @@ C:\\deployment\\addinfinidattype.bat
 
 On Linux:
 ```
-sh ./deployment/addinfinidattype.sh
+sh ./deployment/addinfinidatinfiniboxtype.sh
 ```
 
 
@@ -108,9 +110,10 @@ Use the string returend with the attribute fields for password (PasswordLocal, P
 
 ## Limitations
  
-* Only Consistency groups are supported (no volumes)
+* Only Consistency groups are supported (no volumes) Windows. for Linux- configure the "dataset type" parameter to either cg or volumes
 * Only Sync replication is supported
 * tested on Windows, AIX and Linux with VCS versions of 6.1, 6.2 and 7.3
 ## Authors
 
 * **Itai Weisman** - *Genesis* 
+* **Itai Weisman** - March 2018 - Add support for volumes
