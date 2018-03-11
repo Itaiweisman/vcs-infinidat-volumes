@@ -83,8 +83,11 @@ PasswordLocal | Password for the user of the local InfiniBox |  can be set globa
 remotebox | InfiniBox name/IP which does not have the replica locally attached to the VCS host |  has to be define on each VCS host seperatly
 UserRemote | InfiniBox username  for the remote box | can be set globally, when the same user is used for both InfiniBox 
 PasswordRemote | Password for the user of the remote InfiniBox | can be set globally, when the same user password is used for both InfiniBox 
-LocalCG | Name of the CG monitored on the local InfiniBox | has to be defined on each VCS host seperatly
-RemoteCG | Name of the CG monitored on the remote InfiniBox  | has to be define on each VCS host seperatly
+dataset_type | type of dataset - either 'cg' for consistency group or 'volumes' for volumes | must be set exactly the same on both ends
+LocalCG | With dataset type defined as 'cg' Name of the CG monitored on the local InfiniBox | has to be defined on each VCS host seperatly
+RemoteCG | With dataset type defined as 'cg' Name of the CG monitored on the remote InfiniBox  | has to be define on each VCS host seperatly
+LocalVols | With dataset type defined as 'volumes' - list of local volumes | has to be define on each VCS host seperatly
+RemoteVols | With dataset type defined as 'volumes' - list of remote volumes | has to be define on each VCS host seperatly
 
 **Note** Passwords has to be encrypted before setting them on the resource attributes 
 
