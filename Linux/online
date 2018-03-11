@@ -1,0 +1,398 @@
+
+
+eval 'exec /opt/VRTSperl/bin/perl -I `pwd`/../../lib -S $0 ${1+"$@"}'
+	if 0;
+
+
+use ag_i18n_inc;
+use REST::Client;
+#use infinidat;
+use infinidatibox;
+use JSON;
+use Data::Dumper;
+use MIME::Base64;
+###
+my $ResName=shift;
+VCSAG_SET_ENVS ($ResName, 20091);
+our $location='/tmp/';
+our $lock=$location . "/" . $ResName . ".lock";
+our $sleep=10;
+our $VERSION=1.01;## Supports volumes
+
+
+#open(our , '>', $lock) || die "cant open lock";
+#open(test,">>","/tmp/tst1");
+#print test "started \n";
+#close test;
+#print test "DEBUG started with args:\n";
+#for $j(@ARGV) { print test " $j ";  }
+#print test "\n";
+#print test "resource name is $ResName \n";
+
+#our @required=qw(localbox UserLocal PasswordLocal remotebox UserRemote PasswordRemote LocalCG RemoteCG);
+our %required =( 
+    'localbox'       => 'scalar', 
+    'UserLocal'      => 'scalar', 
+    'PasswordLocal'  => 'scalar',
+    'remotebox'      => 'scalar',
+    'UserRemote'     => 'scalar', 
+    'PasswordRemote' => 'scalar',
+    'dataset_type'   => 'scalar', 
+    'LocalCG'        => 'scalar',
+    'RemoteCG'       => 'scalar',
+    'LocalVols'      => 'vector',
+    'RemoteVols'     => 'vector' );
+our %pars=infinidatibox::check_pars(\@ARGV,\%required);
+if (! %pars) {
+    VCSAG_LOG_MSG("E", "Unable to parse parameters. quitting",17);
+    exit(0);
+}
+our $user;
+our $password;
+
+sub CreateCGHASH {
+	#print test "DEBUG in CreateCGHASH args are @_ \n";
+    $res=shift;
+    $ibox=shift;
+    $user=shift;
+    $password=shift;
+    $vols_ref=shift;
+    @vols=@{ $vols_ref } ;
+	#print test "DEBUG and vols are: \n";
+	#for $v(@vols) {print test " $v "; }
+	#print test "\n";
+    my %so_called_cg ;
+    %so_called_cg=();
+    my $role;
+    my $state; 
+    my $link_id; 
+    my $sync_state;
+    my @ids;
+    @ids=();
+    #print test "DEBUG starting: with role $role,state $state,link_id $link_id,sync_state $sync_state \n";
+    # U:id role entity_type state link_id replication_type sync_state 
+    foreach $vol(@vols) {
+    	#print test "DEBUG in Create CG Hash - looking for $vol \n";
+        $replica_info=infinidatibox::getInfiniBoxSingleObjectByName($res,$ibox,$user,$password,'replicas',$vol,'local_entity_name');
+        %replica_info_hash=%{$replica_info};
+        #foreach $k(keys(%replica_info_hash)) { print test "	DEBUG IN CG HASH - k is $k value is $replica_info_hash{$k} \n";}
+        if (! %replica_info_hash) {
+            VCSAG_LOG_MSG("E", "Unable query volume $vol. quitting",170);
+            return {};
+        }
+        else {
+            if ($state) {
+                if ($state ne $replica_info_hash{'state'}) {
+                    VCSAG_LOG_MSG ("E","inconsistent replica state with vol $vol, got $replica_info_hash{'state'} expected $state quitting",801);
+                    return {};
+                }
+            
+            }
+            else { $state=$replica_info_hash{'state'} };
+
+            if ($link_id) {
+                if ($link_id ne $replica_info_hash{'link_id'}) {
+                    VCSAG_LOG_MSG ("E","inconsistent link id , quitting",171);
+                    return {};
+                }
+            
+            
+            }
+            else {$link_id=$replica_info_hash{'link_id'};}
+            if ($role) {
+                if ($role ne $replica_info_hash{'role'}) {
+                    VCSAG_LOG_MSG("E", "inconsistent role, expected $role got $replica_info_hash{'role'} with volume $vol, quitting ",172);
+                    return {};
+                }
+            
+            }
+            else { VCSAG_LOG_MSG("I", "setting role to $replica_info_hash{'role'}",980) ; $role=$replica_info_hash{'role'}; }
+
+            if ($role eq 'SOURCE' and $sync_state) {
+                if ($sync_state ne $replica_info_hash{'state'} && ( $sync_state eq 'SUSPENDED' or $sync_state eq 'AUTO_SUSPENDED') ) {
+                    VCSAG_LOG_MSG("E", "inconsistent sync state with vol $vol, has $replica_info_hash{'state'} , quitting ",173);
+                    return {};
+                }
+            
+            }
+            else {            $sync_state=$replica_info_hash{'sync_state'}; }
+            if ($replica_info_hash{'replication_type'} ne 'SYNC') {
+                VCSAG_LOG_MSG("E", "wrong replication type", 174); 
+                return {};
+            }
+            if ($replica_info_hash{'entity_type'} ne 'VOLUME') {
+                VCSAG_LOG_MSG("E","wrong entity type ",175); 
+                return {};
+            }
+            #print "pushing $replica_info_hash{'id'} \n";
+            push(@ids,$replica_info_hash{'id'});
+        }
+        }
+        #foreach $j(@ids) { print "DEBUG id in ids- $j \n";}
+        VCSAG_LOG_MSG("I", "global state is $state, role is $role, link id is $link_id, sync state is $sync_state ", 201);
+        $so_called_cg{'state'}=$state;
+        $so_called_cg{'link_id'}=$link_id;
+        $so_called_cg{'sync_state'}=$sync_state;
+        #print test "role is $role \n";
+        $so_called_cg{'role'}=$role;
+        $so_called_cg{'id_list'}=[ @ids ];
+        #print "DEBUG - in Create CG HASH - returning: \n";
+        #foreach $b(keys %so_called_cg) {
+        #	print test "key is $b value is $so_called_cg{$b} \n";
+        #}
+        #print test "IDs: \n" ;
+        #foreach $i(@ { $so_called_cg{'id_list'}} ) { print "and ID $i \n";}
+        #print test "DEBUG DONE \n";
+        return \%so_called_cg;
+
+}
+
+
+sub rolling_switch_role {
+    $res=shift;
+    $box=shift;
+    $user=shift;
+    $password=shift;
+    $cg=shift;
+
+    my $sleep_in_between=10;
+    %cghash=%{$cg};
+    #print "here 5 \n";
+    #foreach $id(@{$cghash{'id_list'}}) { print "DEBUG ID IN LIST $id \n"}
+    foreach $id(@{$cghash{'id_list'}}) {
+        sleep $sleep_in_between;
+        if (infinidatibox::switchRoleFromLocal($res, $box, $user, $password, $id)) { VCSAG_LOG_MSG ("I","switched volume id $id ",202);} 
+        else {VCSAG_LOG_MSG ("E", "unable to switch role for volume with ID $id ",174); return 0;}
+    }
+
+    return 1;
+
+}
+
+sub determine_action {
+    $role = shift;  $replica_state = shift;  $sync_state=shift;  $link_state = shift;
+    #VCSAG_LOG_MSG("I","determining ... based on $role ; $replica_state ; $sync_state ; $link_state",1087);
+    VCSAG_LOG_MSG("I","determining action base on role is $role, replica state is $replica_state, link state is $link_state ",100);
+    @warn_states=('INITIALIZING' ,'SYNC_IN_PROGRESS', 'OUT_OF_SYNC', 'INITIALIZING_PENDING');
+    @fail_states=('SUSPENDED','AUTO_SUSPENDED');
+    $ret=0;
+    my $exit_message="NULL MESSAGE";
+    if ($role eq 'SOURCE') {
+        #print  "SRC-1";
+        if ($replica_state eq 'ACTIVE' && $sync_state eq 'SYNCHRONIZED' && $link_state eq 'UP') {
+            #print  "SRC-OK";
+            $exit_message="Working on source, All is sync";
+            VCSAG_LOG_MSG("I","Working on source, data is Synchronized to target ",101);
+            $ret=1;
+        }
+       if ($replica_state eq 'ACTIVE'  && $link_state eq 'UP' && (grep {$_ eq $sync_state} @warn_states)) {
+            #print  "SRC-2";
+            $exit_message="WARNING replica is not Synchronized";
+            VCSAG_LOG_MSG("W","Replica is not Synchronized",200);
+            $ret=1;
+        }
+        if ($sync_state eq 'OUT_OF_SYNC' && $link_state eq 'UP' && (grep {$_ eq $replica_state} @fail_states)) {
+            #print "SRC-3";
+            $exit_message="ERROR replica state is not on valid condition";
+            VCSAG_LOG_MSG("E","Replica state is invalid ",300);
+            $ret=0;
+        }
+        if ($sync_state eq 'OUT_OF_SYNC' && $link_state ne 'UP' && (grep {$_ eq $replica_state} @fail_states)) {
+            #print "SRC-4";
+            $exit_message="ERROR replica state is not on valid condition";
+            VCSAG_LOG_MSG("E","Relica state is invalid ",301);
+            $ret=0;
+        }
+
+    }
+
+    if ($role eq 'TARGET') {
+        #print  "B-1 \n";
+        if ($link_state ne 'UP') {
+            $exit_message='ERROR Unable to query other box ';
+            VCSAG_LOG_MSG("E","Unable to query paired box",310);
+            $ret=0;
+        }
+
+        else {
+            #print  "B2 \n";
+            if ($replica_state ne 'ACTIVE') {
+                #print  "B4 \n";
+                VCSAG_LOG_MSG("E","Replica is not up ",301);
+                $exit_message="ERROR - Replica is not up";
+                $ret=0;
+            }
+            else {
+                #print  "B5 \n";
+                if ($sync_state eq 'SYNCHRONIZED') {
+                    #print  "B6 \n";
+                    VCSAG_LOG_MSG("I","Attempt to switch role  ; dataset type is $pars{'dataset_type'}",102);
+                    
+                    if ($pars{'dataset_type'} eq 'cg') {
+                        print "DEBUG: working on CG \n";
+                     if (infinidatibox::switchRoleFromLocal($ResName,$pars{'remotebox'},$pars{'UserRemote'},$pars{'PasswordRemote'},$remote_cg_hash{'id'})) {
+                            #print  "B7 \n";
+                            VCSAG_LOG_MSG("I","Switch role ended successfully",103);
+                            $exit_message="OK - switched role";
+                            $ret=1;
+                        }
+
+                    else {
+                        #print  "B8 \n";
+                        VCSAG_LOG_MSG("E","Switch role failed",310);
+                        $exit_message="ERROR - unable to switch role";
+                        $ret=0;
+                    }
+                }
+
+                    if ($pars{'dataset_type'} eq 'volumes') {
+                            #print "B9 \n";
+                            #foreach $i(@{$remote_cg_hash{'id_list'}}) { print "DEBUG 2 $i \n";}
+                            $switched=rolling_switch_role($ResName, $pars{'remotebox'}, $pars{'UserRemote'}, $pars{'PasswordRemote'}, \%remote_cg_hash); ## 1.01 consider adding local vols to local cg hash
+			if ($switched) { $ret=1; } else {$ret=0; }
+                    }
+                
+                }
+
+                else {
+                    #print "B10 \n";
+                    if ($pars{'dataset_type'} eq 'volumes') {
+                        VCSAG_LOG_MSG("E","Pairs are not synchornized - quiting",905);
+                        $ret=0;
+
+                    }
+                    else {
+                    #print "B9 \n";
+                    #print  "Waiting for pairs to sync \n";
+                    VCSAG_LOG_MSG("I","Waiting for synchronized state before switching role ",105);
+                    sleep $sleep;
+
+                    #$local_cg=infinidat::getInfiniBoxSingleObjectByName($ResName,$pars{'localbox'},$pars{'UserLocal'},$pars{'PasswordLocal'},'replicas',$pars{'LocalCG'},'local_cg_name');
+                    #%local_cg_hash=%{$local_cg};
+
+                    $remote_cg_new=infinidatibox::getInfiniBoxSingleObjectByName($ResName,$pars{'remotebox'},$pars{'UserRemote'},$pars{'PasswordRemote'},'replica',$pars{'RemoteCG'},'local_dataset');
+                    %remote_cg_hash_new=%{$remote_cg_new};
+                    VCSAG_LOG_MSG("I","Pairs are now $remote_cg_hash_new{'sync_state'},",1060);
+                    if ($remote_cg_hash_new{'sync_state'} eq 'SYNCHRONIZED') {
+                        #print  "Pairs are now SYNCHRONIZED, attempting to switch role \n";
+                        VCSAG_LOG_MSG("I","Pairs are now SYNCHRONIZED, attempting to switch role",106);
+                        if (infinidatibox::switchRoleFromLocal($ResName,$pars{'remotebox'},$pars{'UserRemote'},$pars{'PasswordRemote'},$remote_cg_hash{'id'})) {
+                        #print  "B7 \n";
+                        VCSAG_LOG_MSG("I","Switch role ended successfully",103);
+                        $exit_message="OK - switched role";
+                        $ret=1;
+                    }
+                    else {
+                        #print  "B8 \n";
+                        $exit_message="ERROR - unable to switch role";
+                        VCSAG_LOG_MSG("E","Switch role failed",310);
+                        $ret=0;
+                    }
+                    }
+                    else {
+                        $exit_message="Pairs did not get Synchronized on a timely fashion \n";
+                        VCSAG_LOG_MSG("E","Pairs did not get Synchronized on a timely fashion",311);
+                        $ret=0;
+                    }
+                }
+                }
+
+            }
+
+        }
+    }
+    #print  "$exit_message \n";
+    #print  "returning $ret";
+    return $ret;
+
+}
+
+
+
+sub create_lock_file($) {
+    $lockfile=shift;
+    VCSAG_LOG_MSG("I","Creating lock file",1000);
+    open($lockfile, ">$lock") ||  VCSAG_LOG_MSG("E","cannot create lock file",711);
+    close $lockfile;
+}
+
+
+
+###Program starts here
+#print test "DEBUG Started \n";
+if ($pars{'dataset_type'} eq 'cg') {
+	#print test "dataset type is CG \n";
+$local_cg=infinidatibox::getInfiniBoxSingleObjectByName($ResName,$pars{'localbox'},$pars{'UserLocal'},$pars{'PasswordLocal'},'replicas',$pars{'LocalCG'},'local_cg_name');
+$remote_cg=infinidatibox::getInfiniBoxSingleObjectByName($ResName,$pars{'remotebox'},$pars{'UserRemote'},$pars{'PasswordRemote'},'replicas',$pars{'RemoteCG'},'local_cg_name');
+}
+elsif ( $pars{'dataset_type'} eq 'volumes' ){
+	#print test "DEBUG dataset type is volumes \n";
+    #%local_vols=GetVols($ResName,$pars{'localbox'}, $pars{'UserLocal'},$pars{'PasswordLocal'},$pars{'LocalVols'}); ### 1.01
+    #%remote_vols=GetVols($ResName,$pars{'remotebox'}, $pars{'UserRemote'},$pars{'PasswordRemote'},$pars{'RemoteVols'}); ### 1.01
+    $local_cg=CreateCGHASH($ResName,$pars{'localbox'}, $pars{'UserLocal'},$pars{'PasswordLocal'},$pars{'LocalVols'}); ### 1.01
+    $remote_cg=CreateCGHASH($ResName,$pars{'remotebox'}, $pars{'UserRemote'},$pars{'PasswordRemote'},$pars{'RemoteVols'}); ### 1.01
+
+
+}
+else {
+   VCSAG_LOG_MSG("E","Unable to determine dataset type, quiting",1011);
+   exit(0); 
+}
+
+#print test "DEBUG Getting info \n";
+%local_cg_hash=%{$local_cg};
+#print test "**** DEBUG local cg hash: $local_cg \n";
+#for $k(keys %local_cg_hash) { print test "key $k value $local_cg_hash{$k} \n";}
+#print test "**** END DEBUG \n";
+%remote_cg_hash=%{$remote_cg};
+#foreach $i(@{$remote_cg_hash{'id_list'}}) { print test "DEBUG 1 $i \n";}
+
+#verify_cg(%local_cg_hash,%remote_cg_hash) if ($pars{'dataset_type'} eq 'volumes'); ### 1.01
+
+
+if ($local_cg_hash{'role'} && $local_cg_hash{'role'} eq $remote_cg_hash{'role'}) {
+	#print test "err 5131 \n";
+    VCSAG_LOG_MSG("E","Both sides are set as $local_cg_hash{'role'}, quiting",5131);
+    exit(0);
+    }
+
+
+if (! $local_cg_hash{'role'}) {
+	#print test "err 511 \n";
+    VCSAG_LOG_MSG("E","Unable to query local box, quitting",511);
+    exit(0);
+    }
+
+if ($local_cg_hash{'role'} eq 'SOURCE') {
+    #print  "Getting pars from local \n";
+    VCSAG_LOG_MSG("I","Working on source, getting parameters from local box",11);
+    $replica_state=$local_cg_hash{'state'};
+    $sync_state=$local_cg_hash{'sync_state'};
+    $link=infinidatibox::getInfiniBoxSingleObjectByName($ResName,$pars{'localbox'},$pars{'UserLocal'},$pars{'PasswordLocal'},'links',$local_cg_hash{'link_id'},'id');
+    %link_hash=%{$link};
+    $link_state=$link_hash{'link_state'};
+}
+
+elsif ($remote_cg_hash{'role'} eq 'SOURCE') {
+    #print  "Getting pars from remote \n";
+    VCSAG_LOG_MSG("I","Working on target , getting parameters from remote box",12);
+    $replica_state=$remote_cg_hash{'state'};
+    $sync_state=$remote_cg_hash{'sync_state'};
+    $link=infinidatibox::getInfiniBoxSingleObjectByName($ResName,$pars{'remotebox'},$pars{'UserRemote'},$pars{'PasswordRemote'},'links',$remote_cg_hash{'link_id'},'id');
+    %link_hash=%{$link};
+    $link_state=$link_hash{'link_state'};
+}
+else {
+    VCSAG_LOG_MSG("E","Cannot determine source",31);
+    exit(0);
+}
+VCSAG_LOG_MSG("I","pars are replica_state $replica_state ; sync_state $sync_state ; link_state $link_state",99);
+if (determine_action($local_cg_hash{'role'}, $replica_state, $sync_state, $link_state)) {
+
+    create_lock_file($lock);
+    }
+close $lock;
+exit(0);
+
+
+
