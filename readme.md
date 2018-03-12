@@ -9,6 +9,7 @@ The Linux/AIX deployment is based on Python module of REST (REST::Client - https
 With the Windows version of the plugin, InfiniBox shell (Infinishell) is being used, which can be obtained from repo.infinidat.com (version 4.0 onwards is supported)
 The plugin can be installed after having Veritas Cluster installed.
 Note - no support for Windows with volumes
+The windows version is availble in https://github.com/Itaiweisman/INFINIDAT_VCS_AGENT
 
 
 ## Installing
